@@ -1,233 +1,165 @@
 import pandas as pd
 import numpy as np
 import random
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.preprocessing import StandardScaler
+
+# ===============================
+# LOAD DATASET
+# ===============================
 
 print("Loading dataset...")
-data = pd.read_csv("solar_data.csv")
+data = pd.read_csv("solar_data_100_points.csv")
 
-X = data[["Thickness", "Doping", "Bandgap", "Defect"]]
-print("Available columns in dataset:", list(data.columns))
+# Log transform doping
+data["Doping1"] = np.log10(data["Doping1"])
+data["Doping2"] = np.log10(data["Doping2"])
 
-y_efficiency = data["Efficiency"]
-available_targets = [col for col in data.columns if col not in ["Thickness", "Doping", "Bandgap", "Defect"]]
-print(f"Available target parameters: {available_targets}")
+X = data[["Eg1","Eg2","Thick1","Thick2","Doping1","Doping2"]]
+y = data[["Voc","Jsc","FF"]]
 
-X_train, X_test, y_train_eff, y_test_eff = train_test_split(
-    X, y_efficiency, test_size=0.2, random_state=42
+# ===============================
+# TRAIN MODEL
+# ===============================
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
 )
 
-model_efficiency = RandomForestRegressor(n_estimators=300, random_state=42)
-model_efficiency.fit(X_train, y_train_eff)
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
 
-models = {
-    'Efficiency': model_efficiency
-}
+model = MultiOutputRegressor(
+    RandomForestRegressor(n_estimators=300, random_state=42)
+)
 
-other_parameters = ['PCE', 'VOC', 'Jsc', 'FF']
-for param in other_parameters:
-    if param in available_targets:
-        y_param = data[param]
-        _, _, y_train_param, y_test_param = train_test_split(
-            X, y_param, test_size=0.2, random_state=42
-        )
-        model_param = RandomForestRegressor(n_estimators=300, random_state=42)
-        model_param.fit(X_train, y_train_param)
-        models[param] = model_param
-        print(f"Trained model for {param}")
-    else:
-        print(f"Parameter {param} not found in dataset. Will calculate empirically.")
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
 
 print("\n========== MODEL PERFORMANCE ==========")
+print("R2 Score:", r2_score(y_test, y_pred))
+print("RMSE:", np.sqrt(mean_squared_error(y_test, y_pred)))
+print("========================================\n")
 
-y_pred_eff = model_efficiency.predict(X_test)
-r2_eff = r2_score(y_test_eff, y_pred_eff)
-rmse_eff = np.sqrt(mean_squared_error(y_test_eff, y_pred_eff))
-cv_score_eff = np.mean(cross_val_score(model_efficiency, X, y_efficiency, cv=5, scoring='r2'))
+# ===============================
+# PCE FORMULA
+# ===============================
 
-print(f"Efficiency Model:")
-print(f"  R² Score: {r2_eff:.4f}")
-print(f"  RMSE: {rmse_eff:.4f}")
-print(f"  Cross-Validation R²: {cv_score_eff:.4f}")
+def calculate_pce(voc, jsc, ff):
+    Pin = 100  # mW/cm²
+    return (voc * jsc * ff) / 1000 * 100  # Convert to percentage
 
-for param_name, model_obj in models.items():
-    if param_name != 'Efficiency':
-        y_true = data[param_name]
-        _, _, _, y_test_param = train_test_split(X, y_true, test_size=0.2, random_state=42)
-        y_pred_param = model_obj.predict(X_test)
-        r2_param = r2_score(y_test_param, y_pred_param)
-        rmse_param = np.sqrt(mean_squared_error(y_test_param, y_pred_param))
-        print(f"{param_name} Model:")
-        print(f"  R² Score: {r2_param:.4f}")
-        print(f"  RMSE: {rmse_param:.4f}")
+# ===============================
+# FITNESS FUNCTION
+# ===============================
 
-print("========================================")
-
-import sys
-
-def parse_values_from_args(param_name, default_values):
-    arg_prefix = f"--{param_name.lower()}="
-    for arg in sys.argv[1:]:
-        if arg.startswith(arg_prefix):
-            try:
-                values_str = arg[len(arg_prefix):]
-                values = [float(x.strip()) for x in values_str.split(',')]
-                if len(values) == 4:
-                    return values
-                else:
-                    print(f"Warning: Expected 4 values for {param_name}, got {len(values)}. Using defaults.")
-            except ValueError:
-                print(f"Warning: Invalid format for {param_name}. Using defaults.")
-    return default_values
-
-print("\n===== ENTER YOUR 4 VALUES FOR EACH PARAMETER =====")
-print("Command line format: python script.py --thickness=0.5,0.6,0.7,0.8 --doping=1e16,2e16,3e16,4e16")
-
-# Default values
-default_thickness = [0.6, 0.7, 0.8, 0.9]
-default_doping = [5e16, 1e17, 3e16, 8e16]
-default_bandgap = [1.45, 1.1, 1.55, 1.35]
-default_defect = [1e14, 5e13, 2e14, 8e13]
-
-thickness_values = parse_values_from_args("thickness", default_thickness)
-doping_values = parse_values_from_args("doping", default_doping)
-bandgap_values = parse_values_from_args("bandgap", default_bandgap)
-defect_values = parse_values_from_args("defect", default_defect)
-
-print("\n===== CURRENT VALUES =====")
-print(f"Thickness values (µm): {thickness_values}")
-print(f"Doping values (cm^-3): {doping_values}")
-print(f"Bandgap values (eV): {bandgap_values}")
-print(f"Defect values (cm^-3): {defect_values}")
-
-print("\n===== TESTING ALL PARAMETER COMBINATIONS =====")
-print("Generating all possible combinations from the 4 values...")
-
-all_combinations = []
-for t in thickness_values:
-    for d in doping_values:
-        for b in bandgap_values:
-            for df in defect_values:
-                combination = [t, d, b, df]
-                all_combinations.append(combination)
-
-print(f"Total combinations to test: {len(all_combinations)}")
-
-def predict_solar_parameters(material_combination):
-    predictions = {}
+def fitness(individual):
+    sample = np.array(individual).reshape(1,-1)
+    sample = scaler.transform(sample)
     
-    for param_name, model_obj in models.items():
-        pred_value = model_obj.predict([material_combination])[0]
-        predictions[param_name] = pred_value
+    voc, jsc, ff = model.predict(sample)[0]
+    pce = calculate_pce(voc, jsc, ff)
     
-    if 'PCE' not in models:
-        predictions['PCE'] = predictions.get('Efficiency', 0)
-    
-    if 'VOC' not in models:
-        predictions['VOC'] = max(0, material_combination[2] - 0.3)
-    
-    if 'Jsc' not in models:
-        thickness_factor = material_combination[0] / 0.5
-        doping_factor = np.log10(material_combination[1]) / 16
-        predictions['Jsc'] = 25 * thickness_factor * doping_factor
-    
-    if 'FF' not in models:
-        defect_impact = 1 - (material_combination[3] / 1e15) * 0.2
-        predictions['FF'] = max(0.65, 0.82 * defect_impact)
-    
-    return predictions
+    return pce, voc, jsc, ff
 
-print("\nEvaluating all combinations for all solar cell parameters...")
-results = []
-for i, combo in enumerate(all_combinations):
-    predictions = predict_solar_parameters(combo)
-    efficiency = predictions['Efficiency']
-    results.append((i+1, combo, predictions, efficiency))
+# ===============================
+# GENETIC ALGORITHM
+# ===============================
+
+POP_SIZE = 40
+GENERATIONS = 40
+MUTATION_RATE = 0.2
+
+bounds = [
+    (1.2, 1.8),   # Eg1
+    (2.0, 2.8),   # Eg2
+    (0.3, 1.0),   # Thick1
+    (0.2, 0.8),   # Thick2
+    (14, 18),     # log Doping1
+    (14, 18)      # log Doping2
+]
+
+def create_individual():
+    return [random.uniform(low, high) for low, high in bounds]
+
+def crossover(p1, p2):
+    point = random.randint(1, len(p1)-1)
+    return p1[:point] + p2[point:]
+
+def mutate(ind):
+    for i in range(len(ind)):
+        if random.random() < MUTATION_RATE:
+            low, high = bounds[i]
+            ind[i] = random.uniform(low, high)
+    return ind
+
+# Initial population
+population = [create_individual() for _ in range(POP_SIZE)]
+
+# Evolution
+for gen in range(GENERATIONS):
     
-    if (i+1) % 50 == 0 or i == len(all_combinations) - 1:
-        print(f"Processed {i+1}/{len(all_combinations)} combinations...")
+    scored = []
+    for ind in population:
+        pce, voc, jsc, ff = fitness(ind)
+        scored.append((ind, pce, voc, jsc, ff))
+    
+    scored.sort(key=lambda x: x[1], reverse=True)
+    population = [x[0] for x in scored]
+    
+    next_gen = population[:5]  # elitism
+    
+    while len(next_gen) < POP_SIZE:
+        p1 = random.choice(population[:15])
+        p2 = random.choice(population[:15])
+        child = crossover(p1,p2)
+        child = mutate(child)
+        next_gen.append(child)
+    
+    population = next_gen
+    
+    print(f"Generation {gen+1} Best PCE: {scored[0][1]:.3f}%")
 
-results.sort(key=lambda x: x[3], reverse=True)
+# ===============================
+# FINAL TOP 4 RESULTS
+# ===============================
 
-print(f"\n{"="*60}")
-print("🏆 TOP 4 SOLAR CELL COMBINATIONS - DETAILED ANALYSIS".center(60))
-print(f"{"="*60}")
-print(f"Evaluated {len(results)} total combinations")
-print(f"Showing top 4 with complete performance parameters\n")
-print("Parameters predicted:")
-print("  • PCE  - Power Conversion Efficiency (%)")
-print("  • VOC  - Open Circuit Voltage (V)")
-print("  • Jsc  - Short Circuit Current (mA/cm²)")
-print("  • FF   - Fill Factor")
-print("  • η    - Overall Efficiency (%)")
-print(f"{"="*60}\n")
+final_results = []
+
+for ind in population:
+    pce, voc, jsc, ff = fitness(ind)
+    final_results.append((ind, pce, voc, jsc, ff))
+
+final_results.sort(key=lambda x: x[1], reverse=True)
+
+print("\n" + "="*60)
+print("🏆 TOP 4 OPTIMIZED TANDEM SOLAR CELLS".center(60))
+print("="*60)
 
 for rank in range(4):
-    idx, params, predictions, eff = results[rank]
-    t, d, b, df = params
+    ind, pce, voc, jsc, ff = final_results[rank]
     
-    print(f"\n{'='*60}")
-    print(f"_RANK #{rank+1} - COMBINATION #{idx}_".center(60))
-    print(f"{'='*60}")
+    print("\n" + "="*60)
+    print(f"RANK #{rank+1}".center(60))
+    print("="*60)
     
-    print(f"\n🔬 MATERIAL PARAMETERS:")
-    print(f"   Thickness:    {t:6.2f} µm")
-    print(f"   Doping:       {d:6.2e} cm⁻³")
-    print(f"   Bandgap:      {b:6.3f} eV")
-    print(f"   Defects:      {df:6.2e} cm⁻³")
+    print("\n🔬 MATERIAL PARAMETERS:")
+    print(f"Eg1:        {ind[0]:.3f} eV")
+    print(f"Eg2:        {ind[1]:.3f} eV")
+    print(f"Thickness1: {ind[2]:.3f} µm")
+    print(f"Thickness2: {ind[3]:.3f} µm")
+    print(f"Doping1:    10^{ind[4]:.2f} cm⁻³")
+    print(f"Doping2:    10^{ind[5]:.2f} cm⁻³")
     
-    print(f"\n⚡ SOLAR CELL PERFORMANCE:")
-    print(f"   PCE  (Power Conversion Efficiency): {predictions['PCE']:6.3f} %")
-    print(f"   VOC  (Open Circuit Voltage):        {predictions['VOC']:6.3f} V")
-    print(f"   Jsc  (Short Circuit Current):       {predictions['Jsc']:6.3f} mA/cm²")
-    print(f"   FF   (Fill Factor):                 {predictions['FF']:6.3f}")
-    print(f"   η    (Overall Efficiency):          {predictions['Efficiency']:6.3f} %")
-    
-    print(f"\n📊 DERIVED METRICS:")
-    power_density = predictions['VOC'] * predictions['Jsc'] * predictions['FF'] / 1000
-    print(f"   Max Power Density:                  {power_density:6.4f} W/cm²")
-    
-    print(f"\n⭐ QUALITY ASSESSMENT:")
-    if predictions['Efficiency'] >= 18:
-        quality = "EXCELLENT ⭐⭐⭐"
-        color = "🟢"
-    elif predictions['Efficiency'] >= 15:
-        quality = "GOOD ⭐⭐"
-        color = "🟡"
-    else:
-        quality = "FAIR ⭐"
-        color = "🔴"
-    print(f"   Rating: {color} {quality}")
-    
-    print(f"{'='*60}\n")
+    print("\n⚡ PERFORMANCE:")
+    print(f"Voc:  {voc:.3f} V")
+    print(f"Jsc:  {jsc:.3f} mA/cm²")
+    print(f"FF:   {ff:.3f}")
+    print(f"PCE:  {pce:.3f} %")
 
-best_combo = results[0]
-best_idx, best_params, best_predictions, best_eff = best_combo
-
-print(f"\n{"="*60}")
-print("🏆 CHAMPION COMBINATION SUMMARY".center(60))
-print(f"{"="*60}")
-print(f"Rank: #1 (Combination #{best_idx})")
-print(f"Overall Efficiency: {best_eff:.3f}%")
-print()
-print("Key Performance Indicators:")
-print(f"  PCE:  {best_predictions['PCE']:6.3f}%")
-print(f"  VOC:  {best_predictions['VOC']:6.3f} V")
-print(f"  Jsc:  {best_predictions['Jsc']:6.3f} mA/cm²")
-print(f"  FF:   {best_predictions['FF']:6.3f}")
-print(f"\nRecommended for manufacturing prototype!")
-print(f"{"="*60}")
-
-print("\n===== INPUT VALUES USED =====")
-print("From the 4 specified values for each parameter:")
-print(f"Thickness: {thickness_values}")
-print(f"Doping: {doping_values}")
-print(f"Bandgap: {bandgap_values}")
-print(f"Defect: {defect_values}")
-
-print("\nThe top 4 combinations above are the best selections from these specific input values.")
-
-print("\nDirect combination testing completed. See results above.")
+print("\nOptimization completed 🚀")
